@@ -9,6 +9,7 @@ import sys,os
 sys.path.append("/home/gywrc-s1/xfy/xufengyu_BasePerception_0720_sam/src/msgs")
 import message_filters
 from rclpy.callback_groups import MutuallyExclusiveCallbackGroup
+from rclpy.executors import MultiThreadedExecutor
 from perception_msgs.msg import VitImageEmbedding
 from perception_msgs.msg import BoundingBoxes
 from perception_msgs.msg import VitBoundingBoxes
@@ -23,13 +24,10 @@ class MinimalSubscriber(Node):
         super().__init__('minimal_subscriber')
         self.get_logger().info("启动%s node" % name)
         self.bridge = CvBridge()
-
-        # self.image_emb_sub = message_filters.Subscriber(self, VitImageEmbedding, '/Image_embedding')
-        # self.image_emb_sub = message_filters.Subscriber(self, VitImageEmbedding, '/vit_embedding_raw')
-        # self.yolo_sub = message_filters.Subscriber(self, BoundingBoxes, '/yolov8/bounding_boxes')
         img_callback_group = MutuallyExclusiveCallbackGroup()
         yolo_callback_group = MutuallyExclusiveCallbackGroup()
-        self.image_emb_sub = self.create_subscription(VitImageEmbedding, "/vit_embedding_raw", self.callback, 1, callback_group=img_callback_group)
+        self.image_emb_sub = self.create_subscription(VitImageEmbedding, "/Image_embedding", self.callback, 1, callback_group=img_callback_group)
+        # self.image_emb_sub = self.create_subscription(VitImageEmbedding, "/vit_embedding_raw", self.callback, 1, callback_group=img_callback_group)
         self.yolo_sub = self.create_subscription(BoundingBoxes, "/yolov8/bounding_boxes", self.yolo_callback, 1, callback_group=yolo_callback_group)
         self.yolo_queue = deque()
         self.queue_size = 30
@@ -65,6 +63,8 @@ class MinimalSubscriber(Node):
         self.publisher_.publish(out_msg)
 
     def yolo_callback(self, msg_yolo):
+        if len(self.yolo_queue) > 0 and self.yolo_queue[-1].header.stamp.sec > msg_yolo.header.stamp.sec:
+            self.yolo_queue = deque()
         self.yolo_queue.append(msg_yolo)
         if len(self.yolo_queue) > self.queue_size:
             self.yolo_queue.popleft()
@@ -72,7 +72,13 @@ class MinimalSubscriber(Node):
 def main(args=None):
     rclpy.init(args=args)
     minimal_subscriber = MinimalSubscriber('MergeVitBoundingBox')
-    rclpy.spin(minimal_subscriber)
+    executor = MultiThreadedExecutor(num_threads=2)
+    executor.add_node(minimal_subscriber)
+    try:
+        executor.spin()
+    finally:
+        # Shutdown the executor
+        executor.shutdown()
     minimal_subscriber.destroy_node()
     rclpy.shutdown()
 
